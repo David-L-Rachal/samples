@@ -1,0 +1,6 @@
+/build/
+/cmake-build-*/
+.cache/
+.idea/
+.vscode/
+.DS_Store
