@@ -43,6 +43,19 @@ h1 {font-size:clamp(38px,5vw,64px);line-height:1.07;letter-spacing:-.055em;margi
 .palette-line {display:flex;gap:5px}
 .palette-line i {width:14px;height:14px;border-radius:50%;border:1px solid var(--hs-brd)}
 .studio-note {margin:24px 0 0;font-size:11px;color:var(--hs-text-faint);line-height:1.7}
+.movement-panel {margin-top:24px;padding:24px!important}
+.movement-panel h2 {margin:0 0 7px;color:var(--hs-text);font-size:19px;letter-spacing:-.025em}
+.movement-panel > p {margin:0;color:var(--hs-text-dim);font-size:12px;line-height:1.8}
+.motion-controls {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin-top:21px}
+.motion-field {min-width:0}
+.motion-label {display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:21px;margin-bottom:12px}
+.motion-label label {font-size:12px;font-weight:600;color:var(--hs-text)}
+.motion-label output {font-size:11px;color:var(--hs-blue-lt);font-variant-numeric:tabular-nums}
+.motion-field input[type="range"] {display:block;width:100%;min-height:34px;margin:0;accent-color:var(--hs-blue-lt);cursor:pointer}
+.motion-field select {display:block;width:100%;min-height:40px;font:inherit;font-size:12px}
+.motion-field input:focus-visible,.motion-field select:focus-visible {outline:2px solid var(--hs-blue-lt);outline-offset:4px}
+.motion-field p {margin:8px 0 0;font-size:11px;line-height:1.6;color:var(--hs-text-dim)}
+.movement-panel .motion-preference {margin-top:18px;padding-top:14px;border-top:1px solid var(--hs-brd-soft);font-size:11px;color:var(--hs-text-dim)}
 .download-panel {margin-top:24px;padding:24px!important}
 .download-panel h2 {margin:0 0 7px;color:var(--hs-text);font-size:19px;letter-spacing:-.025em}
 .download-panel p {margin:0;color:var(--hs-text-dim);font-size:12px;line-height:1.8}
@@ -52,7 +65,8 @@ h1 {font-size:clamp(38px,5vw,64px);line-height:1.07;letter-spacing:-.055em;margi
 .embed-usage code {display:block;margin-top:5px;color:var(--hs-text);font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap}
 .download-panel .file-status {min-height:20px;margin-top:10px;font-size:11px;color:var(--hs-text-dim)}
 @media(max-width:720px) {.studio-grid {grid-template-columns:1fr;gap:20px}.studio {margin-top:38px}.sample {min-height:250px}.studio-header small {display:none}body.hs-body {padding:0 18px 90px}.studio-header {padding:22px 0}.profile-card {padding:15px}.intro {font-size:14px}}
-@media(max-width:420px) {.download-actions {flex-direction:column}.download-actions .hs-btn {width:100%}.download-panel {padding:19px!important}}
+@media(max-width:720px) {.motion-controls {grid-template-columns:1fr;gap:20px}.motion-label {margin-bottom:7px}}
+@media(max-width:420px) {.download-actions {flex-direction:column}.download-actions .hs-btn {width:100%}.download-panel,.movement-panel {padding:19px!important}}
 </style>
 </head>
 <body class="hs-body">
@@ -84,15 +98,42 @@ h1 {font-size:clamp(38px,5vw,64px);line-height:1.07;letter-spacing:-.055em;margi
     <div class="sample-tag">Live interface preview</div>
     <div class="hs-rule" style="margin-bottom:20px"></div>
     <h2 id="active-name">Classic</h2>
-    <p>Softly drifting hexagons, ambient pulses, and a glow that follows your cursor.</p>
+    <p id="effect-description">Slow cloud haze drifts softly behind the honeycomb.</p>
     <button type="button" class="hs-btn hs-btn-primary" id="customize">Customize colors <span aria-hidden="true">↗</span></button>
    </div>
    <div class="sample-foot"><span id="appearance">DARK APPEARANCE</span><div class="palette-line" aria-hidden="true"><i></i><i></i><i></i></div></div>
   </section>
  </div>
+ <section class="hs-panel movement-panel" aria-labelledby="movement-title">
+  <h2 id="movement-title">Movement &amp; atmosphere</h2>
+  <p>Set the scale, choose a pace, and add a little atmosphere.</p>
+  <div class="motion-controls">
+   <div class="motion-field">
+    <div class="motion-label"><label for="hex-size">Hex size</label><output id="size-value" for="hex-size">42 px</output></div>
+    <input type="range" id="hex-size" min="12" max="160" step="1" value="42" aria-describedby="size-help">
+    <p id="size-help">Small cells to a wide honeycomb.</p>
+   </div>
+   <div class="motion-field">
+    <div class="motion-label"><label for="motion-speed">Movement speed</label><output id="speed-value" for="motion-speed">1.0×</output></div>
+    <input type="range" id="motion-speed" min="0" max="3" step="0.1" value="1" aria-describedby="speed-help">
+    <p id="speed-help">0× pauses the animation.</p>
+   </div>
+   <div class="motion-field">
+    <div class="motion-label"><label for="background-effect">Background effect</label></div>
+    <select id="background-effect" class="hs-select" aria-describedby="effect-help">
+     <option value="clouds" selected>Cloud haze</option>
+     <option value="lightning">Soft lightning</option>
+     <option value="water">Water ripples</option>
+     <option value="none">None</option>
+    </select>
+    <p id="effect-help">Water keeps the grid anchored. Lightning glows softly behind it.</p>
+   </div>
+  </div>
+  <p class="motion-preference" id="motion-preference">Animation follows your system’s reduced-motion preference and pauses in hidden tabs.</p>
+ </section>
  <section class="hs-panel download-panel" aria-labelledby="download-title">
   <h2 id="download-title">Take your palette with you.</h2>
-  <p>Download a ready-to-use background, or save a profile to keep editing later.</p>
+  <p>Download a ready-to-use background, or save your colors and motion settings to keep editing later.</p>
   <div class="download-actions">
    <button type="button" class="hs-btn hs-btn-primary" id="download-background">Download background (.js)</button>
    <button type="button" class="hs-btn" id="export-profile">Export profile (.json)</button>
@@ -110,6 +151,16 @@ __BACKGROUND_SCRIPT__
 <script>
 (function () {
  var colors = {original:['#6ec4ff','#3ddc84','#ff5a60'],carbon:['#c9c9c9','#ff4545','#f5f5f5'],nimbus:['#78cafa','#f8fcff','#aebecd']};
+ var effectDescriptions = {
+  clouds: 'Slow cloud haze drifts softly behind the honeycomb.',
+  lightning: 'Soft, hazy lightning glows behind the hexagons.',
+  water: 'The honeycomb stays anchored while its contours ripple like water.',
+  none: 'Ambient pulses and cursor glow highlight the honeycomb.'
+ };
+ var sizeInput = document.getElementById('hex-size');
+ var speedInput = document.getElementById('motion-speed');
+ var effectInput = document.getElementById('background-effect');
+ var motionPreference = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
  function sync() {
   var profile = HexStudio.getProfile();
   document.querySelectorAll('[data-profile]').forEach(function(button) { button.setAttribute('aria-pressed', String(button.dataset.profile === profile.theme)); });
@@ -117,9 +168,33 @@ __BACKGROUND_SCRIPT__
   document.getElementById('active-name').textContent = theme ? theme.label.split(' / ')[0] : 'Your custom profile';
   document.getElementById('appearance').textContent = profile.mode.toUpperCase() + ' APPEARANCE';
   document.querySelectorAll('.palette-line i').forEach(function (dot, i) { dot.style.background = (profile.colors || colors[profile.theme])[i]; });
+  var size = profile.size == null ? 42 : profile.size;
+  var speed = profile.speed == null ? 1 : profile.speed;
+  var effect = profile.effect || 'clouds';
+  sizeInput.value = size;
+  speedInput.value = speed;
+  effectInput.value = effect;
+  sizeInput.setAttribute('aria-valuetext', size + ' pixels');
+  speedInput.setAttribute('aria-valuetext', Number(speed).toFixed(1) + ' times normal speed');
+  document.getElementById('size-value').textContent = size + ' px';
+  document.getElementById('speed-value').textContent = Number(speed).toFixed(1) + '×';
+  document.getElementById('effect-description').textContent = effectDescriptions[effect] || effectDescriptions.clouds;
+  var motionNote = 'Animation follows your system’s reduced-motion preference and pauses in hidden tabs.';
+  if (motionPreference && motionPreference.matches) motionNote = 'Animation is paused by your system’s reduced-motion setting.';
+  else if (speed === 0 && profile.motion === 'still') motionNote = 'Animation is paused. Enable Animate background in Theme settings and increase movement speed to resume.';
+  else if (speed === 0) motionNote = 'Animation is paused at 0× speed. Increase movement speed to resume.';
+  else if (profile.motion === 'still') motionNote = 'Animation is paused in Theme settings. Enable Animate background there to resume.';
+  document.getElementById('motion-preference').textContent = motionNote;
  }
  document.querySelectorAll('[data-profile]').forEach(function (button) { button.addEventListener('click', function () { HexStudio.setTheme(button.dataset.profile); }); });
  document.getElementById('customize').addEventListener('click', function () { HexStudio.openPicker(); });
+ sizeInput.addEventListener('input', function () { HexStudio.setSize(Number(sizeInput.value)); });
+ speedInput.addEventListener('input', function () { HexStudio.setSpeed(Number(speedInput.value)); });
+ effectInput.addEventListener('change', function () { HexStudio.setEffect(effectInput.value); });
+ if (motionPreference) {
+  if (motionPreference.addEventListener) motionPreference.addEventListener('change', sync);
+  else if (motionPreference.addListener) motionPreference.addListener(sync);
+ }
  var fileStatus = document.getElementById('file-status');
  var fileInput = document.getElementById('profile-file');
  document.getElementById('export-profile').addEventListener('click', function () {
@@ -134,7 +209,7 @@ __BACKGROUND_SCRIPT__
  fileInput.addEventListener('change', function () {
   var file = fileInput.files && fileInput.files[0];
   if (!file) return;
-  if (file.size > 65536) { fileStatus.textContent = 'Choose an Hex Studio profile JSON file smaller than 64 KB.'; return; }
+  if (file.size > 65536) { fileStatus.textContent = 'Choose a Hex Studio profile JSON file smaller than 64 KB.'; return; }
   var reader = new FileReader();
   reader.onload = function () {
    try { HexStudio.importProfile(reader.result); fileStatus.textContent = 'Profile imported. You can keep editing or download your background.'; }

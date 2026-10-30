@@ -6,7 +6,26 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'hex-studio.js'), 'utf
 
 function setup(options = {}) {
   const rafs = new Map(), listeners = {}, mediaListeners = {}, store = new Map(), blobs = new Map(), downloads = [], cleanups = [];
-  let id = 0, strokes = 0, active;
+  const canvasStats = {frames: 0, fills: 0, gradients: 0, effectPaints: 0};
+  let id = 0, strokes = 0, active, currentPath = [], framePaths = [];
+  const canvasContext = {
+    beginPath(){currentPath=[]},
+    moveTo(x,y){currentPath.push({x,y,method:'moveTo'})},
+    lineTo(x,y){currentPath.push({x,y,method:'lineTo'})},
+    quadraticCurveTo(){},
+    bezierCurveTo(){},
+    arc(){},
+    ellipse(){},
+    closePath(){},
+    stroke(){strokes++;framePaths.push(currentPath.map(point=>({...point})))},
+    fill(){canvasStats.fills++},
+    fillRect(){canvasStats.effectPaints++},
+    clearRect(){canvasStats.frames++;framePaths=[]},
+    setTransform(){},
+    save(){},restore(){},translate(){},rotate(){},scale(){},
+    createRadialGradient(){canvasStats.gradients++;return {addColorStop(){}}},
+    createLinearGradient(){canvasStats.gradients++;return {addColorStop(){}}}
+  };
   class Element {
     constructor(tag) {
       this.tagName = tag.toUpperCase(); this.nodeType = 1; this.childNodes = [];
@@ -35,7 +54,7 @@ function setup(options = {}) {
       (listeners['doc:click']||[]).forEach(fn=>fn(event));
     }
     remove() {if(this.parentNode)this.parentNode.childNodes=this.parentNode.childNodes.filter(c=>c!==this)}
-    getContext() {return options.noCanvas ? null : {beginPath(){},moveTo(){},lineTo(){},closePath(){},stroke(){strokes++},fill(){},clearRect(){},setTransform(){}}}
+    getContext() {return options.noCanvas ? null : canvasContext}
   }
   const root=new Element('html'),body=new Element('body'),head=new Element('head'),script=new Element('script');
   root.appendChild(head);root.appendChild(body);
@@ -53,11 +72,22 @@ function setup(options = {}) {
   const context=vm.createContext({window,document,location:{search:options.search||''},URLSearchParams,Blob:class {constructor(parts,options){this.content=parts.join('');this.type=options.type}},CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail}}});
   const run=()=>vm.runInContext(options.source||source,context);
   run();
-  return {window,document,root,body,head,rafs,store,media,mediaListeners,run,downloads,blobs,cleanups,get active(){return active},get strokes(){return strokes},
+  return {window,document,root,body,head,rafs,store,media,mediaListeners,run,downloads,blobs,cleanups,canvasStats,get active(){return active},get strokes(){return strokes},get gridPaths(){return framePaths.filter(points=>points.length===6)},
     event(k,e={}){(listeners[k]||[]).forEach(fn=>fn(e))},step(time){const pending=[...rafs.values()];rafs.clear();pending.forEach(fn=>fn(time))}};
 }
 let checks=0;
 function test(name,fn){fn();checks++;console.log('PASS',name)}
+function controlByLabel(element,label) {
+ if(element.getAttribute('aria-label')===label)return element;
+ for(const child of element.childNodes){const result=controlByLabel(child,label);if(result)return result}
+ return null;
+}
+function inputValue(element,value,event='input') {
+ assert.ok(element,'the labeled control must exist');
+ element.value=String(value);
+ assert.ok(element.handlers[event]&&element.handlers[event].length,'the control must handle '+event);
+ element.handlers[event].forEach(fn=>fn({target:element}));
+}
 test('original defaults, canvas, and singleton animation',()=>{
  const e=setup();assert.equal(e.window.HexStudio.getProfile().theme,'original');assert.equal(e.rafs.size,1);
  for(let i=0;i<20;i++)e.window.HexStudio.setTheme(i%2?'carbon':'nimbus');
@@ -158,6 +188,111 @@ test('download creates proper files and delays URL cleanup',()=>{
  assert.equal(e.downloads.length,2);assert.equal(e.downloads[0].filename,'hexstudio-carbon-profile.json');assert.equal(e.downloads[0].blob.type,'application/json');
  assert.equal(JSON.parse(e.downloads[0].blob.content).theme,'carbon');assert.equal(e.downloads[1].filename,'hex-background.js');new vm.Script(e.downloads[1].blob.content);
  assert.equal(e.body.childNodes.filter(c=>c.tagName==='A').length,0);assert.equal(e.blobs.size,2);e.cleanups.forEach(fn=>fn());assert.equal(e.blobs.size,0);
+});
+test('legacy v1 profiles receive compatible size, speed, and effect defaults',()=>{
+ const legacy={version:1,theme:'carbon',mode:'dark',motion:'drift'};
+ const e=setup({saved:JSON.stringify(legacy)}),api=e.window.HexStudio;
+ assert.equal(api.getProfile().theme,'carbon');
+ assert.equal(api.getProfile().size,42);assert.equal(api.getProfile().speed,1);assert.equal(api.getProfile().effect,'clouds');
+ api.setSize(80);api.setSpeed(2);api.setEffect('water');api.importProfile(legacy);
+ assert.equal(api.getProfile().size,42);assert.equal(api.getProfile().speed,1);assert.equal(api.getProfile().effect,'clouds');
+ const configured=setup({attrs:{'data-size':'72','data-speed':'1.5','data-effect':'none'}}).window.HexStudio.getProfile();
+ assert.equal(configured.size,72);assert.equal(configured.speed,1.5);assert.equal(configured.effect,'none');
+});
+test('settings setters reject invalid values without changing the profile',()=>{
+ const e=setup(),api=e.window.HexStudio;
+ api.setSize(12);api.setSize(160);api.setSpeed(0);api.setSpeed(3);
+ const before=api.exportProfile();
+ for(const value of [11,161,NaN,Infinity,-Infinity,'42',null,undefined])assert.throws(()=>api.setSize(value));
+ for(const value of [-0.01,3.01,NaN,Infinity,-Infinity,'1',null,undefined])assert.throws(()=>api.setSpeed(value));
+ for(const value of ['rain','Clouds','__proto__','',null,undefined])assert.throws(()=>api.setEffect(value));
+ assert.equal(api.exportProfile(),before);
+});
+test('settings validation is atomic during profile import',()=>{
+ const e=setup(),api=e.window.HexStudio;
+ api.setTheme('carbon');api.setSize(64);api.setSpeed(1.5);api.setEffect('water');
+ const profile=JSON.parse(api.exportProfile()),before=api.exportProfile();
+ for(const patch of [{size:11},{size:161},{size:'42'},{size:null},{speed:-1},{speed:3.01},{speed:'1'},{speed:null},{effect:'rain'},{effect:null}]) {
+  assert.throws(()=>api.importProfile(JSON.stringify({...profile,...patch})));
+  assert.equal(api.exportProfile(),before,'a rejected import must not partially change the active settings');
+ }
+});
+test('palette and motion changes retain the chosen animation settings',()=>{
+ const e=setup(),api=e.window.HexStudio;
+ api.setSize(76);api.setSpeed(0.75);api.setEffect('lightning');
+ function assertSettings(){const p=api.getProfile();assert.equal(p.size,76);assert.equal(p.speed,0.75);assert.equal(p.effect,'lightning')}
+ api.setTheme('nimbus');assertSettings();
+ api.setColors({background:'#071521',colors:['#a8dfff','#ffffff','#bac8d6']});assertSettings();
+ api.setMotion('still');assertSettings();api.setMotion('drift');assertSettings();
+});
+test('size, speed, and atmosphere survive browser, JSON, and standalone round trips',()=>{
+ const e=setup({attrs:{'data-stripe':'1'}}),api=e.window.HexStudio;
+ api.setColors({background:'#071521',colors:['#a8dfff','#ffffff','#bac8d6']});
+ api.setSize(68);api.setSpeed(1.75);api.setEffect('water');
+ const json=api.exportProfile(),profile=JSON.parse(json);
+ const restored=setup({saved:e.store.get('hexstudio.profile.v1')});
+ assert.deepEqual(JSON.parse(restored.window.HexStudio.exportProfile()),profile);
+ const imported=setup();imported.window.HexStudio.importProfile(json);
+ assert.deepEqual(JSON.parse(imported.window.HexStudio.exportProfile()),profile);
+ const standalone=setup({source:api.backgroundScript(),blockStorage:true});
+ assert.deepEqual(JSON.parse(standalone.window.HexStudio.exportProfile()),profile);
+ assert.equal(standalone.body.querySelector('.hexstudio-picker'),null);
+});
+test('labeled picker controls apply size, movement speed, and background effect',()=>{
+ const e=setup(),picker=e.body.querySelector('.hexstudio-picker'),api=e.window.HexStudio;
+ inputValue(controlByLabel(picker,'Hex size'),84);
+ assert.equal(api.getProfile().size,84);
+ inputValue(controlByLabel(picker,'Movement speed'),0.5);
+ assert.equal(api.getProfile().speed,0.5);
+ inputValue(controlByLabel(picker,'Background effect'),'water','change');
+ assert.equal(api.getProfile().effect,'water');
+ inputValue(controlByLabel(picker,'Movement speed'),0);
+ assert.equal(api.getProfile().speed,0);assert.equal(e.rafs.size,0);
+});
+test('hex size changes actual grid density',()=>{
+ const e=setup(),api=e.window.HexStudio;
+ api.setEffect('none');api.setMotion('still');api.setSize(24);
+ const smallCount=e.gridPaths.length;assert.ok(smallCount>0);
+ api.setSize(96);const largeCount=e.gridPaths.length;
+ assert.ok(largeCount>0);assert.ok(largeCount<smallCount/4,'larger hexagons must draw fewer cells');
+});
+test('speed zero pauses every atmosphere and resumes a single animation loop',()=>{
+ for(const effect of ['clouds','lightning','water','none']) {
+  const e=setup(),api=e.window.HexStudio;api.setEffect(effect);e.step(0);e.step(50);
+  api.setSpeed(0);assert.equal(e.rafs.size,0,effect+' must stop scheduling frames at zero speed');
+  const frames=e.canvasStats.frames,paints=e.canvasStats.effectPaints;
+  e.step(100);e.step(150);assert.equal(e.canvasStats.frames,frames);assert.equal(e.canvasStats.effectPaints,paints);
+  api.setSpeed(1);assert.equal(e.rafs.size,1);api.setSpeed(2);assert.equal(e.rafs.size,1);
+  e.step(200);e.step(250);assert.ok(e.canvasStats.frames>frames);
+ }
+});
+test('atmosphere animation respects reduced motion and hidden tabs',()=>{
+ for(const effect of ['clouds','lightning','water']) {
+  const e=setup({reduce:true}),api=e.window.HexStudio;api.setEffect(effect);assert.equal(e.rafs.size,0);
+  const reducedFrames=e.canvasStats.frames;e.step(0);e.step(50);assert.equal(e.canvasStats.frames,reducedFrames);
+  e.media.matches=false;e.mediaListeners.change.forEach(fn=>fn());assert.equal(e.rafs.size,1);
+  e.step(100);e.step(150);e.document.hidden=true;e.event('doc:visibilitychange');assert.equal(e.rafs.size,0);
+  const hiddenFrames=e.canvasStats.frames;e.step(200);assert.equal(e.canvasStats.frames,hiddenFrames);
+  e.document.hidden=false;e.event('doc:visibilitychange');assert.equal(e.rafs.size,1);
+ }
+});
+test('water ripples deform hex vertices while cells stay anchored',()=>{
+ const e=setup(),api=e.window.HexStudio;api.setEffect('water');api.setSpeed(1);api.setSize(42);
+ e.step(0);const initial=e.gridPaths[0];assert.ok(initial,'water must still draw the hex grid');
+ let maxCenterTravel=0,shapeChanged=false;
+ const center=points=>({x:points.reduce((sum,p)=>sum+p.x,0)/6,y:points.reduce((sum,p)=>sum+p.y,0)/6});
+ const origin=center(initial);
+ for(let frame=1;frame<=180;frame++) {
+  e.step(frame*50);const current=e.gridPaths[0];assert.ok(current);
+  const now=center(current);maxCenterTravel=Math.max(maxCenterTravel,Math.hypot(now.x-origin.x,now.y-origin.y));
+  for(let i=1;i<6;i++) {
+   const beforeX=initial[i].x-initial[0].x,beforeY=initial[i].y-initial[0].y;
+   const afterX=current[i].x-current[0].x,afterY=current[i].y-current[0].y;
+   if(Math.hypot(afterX-beforeX,afterY-beforeY)>0.05)shapeChanged=true;
+  }
+ }
+ assert.ok(shapeChanged,'water must change vertex-relative geometry rather than translate the entire grid');
+ assert.ok(maxCenterTravel<20,'water cells should remain anchored instead of drifting through a full row');
 });
 console.log(`${checks} behavioral checks passed`);
 module.exports = {setup};

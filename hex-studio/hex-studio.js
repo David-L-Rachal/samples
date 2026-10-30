@@ -7,6 +7,7 @@
  *
  * Existing options: data-mode="dark|light|off", data-frame="1|0",
  * data-stripe="1|0", data-motion="drift|still", data-size="42", ?nohex=1.
+ * data-speed="1" (0–3), data-effect="clouds|lightning|water|none".
  * New options: data-theme="original|carbon|nimbus", data-controls="1|0",
  * data-remember="1|0", data-storage-key="hexstudio.profile.v1".
  * Saved choices take precedence over defaults when data-remember="1".
@@ -16,6 +17,7 @@
  * HexStudio.getProfile(); HexStudio.setMotion('still'); HexStudio.reset();
  * HexStudio.openPicker(); HexStudio.closePicker(); HexStudio.getThemes();
  * HexStudio.downloadProfile(); HexStudio.importProfile(json); HexStudio.downloadBackground();
+ * HexStudio.setSize(64); HexStudio.setSpeed(0.8); HexStudio.setEffect('water');
  * Dispatches hexstudio:change on window with the active profile in event.detail.
  */
 (function hexStudioRuntime(embedded) {
@@ -34,7 +36,13 @@
     var remember = opt('remember', embedded ? '0' : '1') !== '0';
     var storageKey = opt('storage-key', 'hexstudio.profile.v1');
     var storageOK = true;
-    var radius = Math.max(12, Math.min(160, parseFloat(opt('size', embedded && embedded.size || '42')) || 42));
+    var initialSize = Math.max(12, Math.min(160, parseFloat(opt('size', embedded && embedded.size || '42')) || 42));
+    var initialSpeed = parseFloat(opt('speed', '1'));
+    if (!isFinite(initialSpeed) || initialSpeed < 0 || initialSpeed > 3) initialSpeed = 1;
+    var effects = ['clouds', 'lightning', 'water', 'none'];
+    var initialEffect = opt('effect', 'clouds');
+    if (effects.indexOf(initialEffect) < 0) initialEffect = 'clouds';
+    var radius = initialSize;
     var media = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
     var themes = {
         original: {
@@ -69,19 +77,27 @@
     }
     function validProfile(value) {
         if (!value || value.version !== 1 || ['dark', 'light'].indexOf(value.mode) < 0 || ['drift', 'still'].indexOf(value.motion) < 0) return null;
+        if (value.size !== undefined && !inRange(value.size, 12, 160)) return null;
+        if (value.speed !== undefined && !inRange(value.speed, 0, 3)) return null;
+        if (value.effect !== undefined && effects.indexOf(value.effect) < 0) return null;
+        var settings = {size: value.size === undefined ? initialSize : value.size,
+            speed: value.speed === undefined ? initialSpeed : value.speed,
+            effect: value.effect === undefined ? initialEffect : value.effect};
         if (value.theme === 'custom') {
             if (!hex(value.background) || !Array.isArray(value.colors) || value.colors.length !== 3 || !value.colors.every(hex)) return null;
-            return {version: 1, theme: 'custom', mode: luminance(hex(value.background)) > 0.179 ? 'light' : 'dark', motion: value.motion, background: hex(value.background), colors: value.colors.map(hex)};
+            return {version: 1, theme: 'custom', mode: luminance(hex(value.background)) > 0.179 ? 'light' : 'dark', motion: value.motion, background: hex(value.background), colors: value.colors.map(hex), size: settings.size, speed: settings.speed, effect: settings.effect};
         }
         if (!Object.prototype.hasOwnProperty.call(themes, value.theme)) return null;
-        return {version: 1, theme: value.theme, mode: value.mode, motion: value.motion};
+        return {version: 1, theme: value.theme, mode: value.mode, motion: value.motion, size: settings.size, speed: settings.speed, effect: settings.effect};
     }
+    function inRange(value, min, max) { return typeof value === 'number' && isFinite(value) && value >= min && value <= max; }
     var themeOption = opt('theme', 'original');
     if (!Object.prototype.hasOwnProperty.call(themes, themeOption)) themeOption = 'original';
     var defaults = {
         version: 1, theme: themeOption,
         mode: tag && tag.hasAttribute('data-mode') ? (initialMode === 'light' ? 'light' : 'dark') : themes[themeOption].mode,
-        motion: opt('motion', 'drift') === 'still' ? 'still' : 'drift'
+        motion: opt('motion', 'drift') === 'still' ? 'still' : 'drift',
+        size: initialSize, speed: initialSpeed, effect: initialEffect
     };
     if (embedded && validProfile(embedded.profile)) defaults = validProfile(embedded.profile);
     var profile = clone(defaults);
@@ -90,10 +106,11 @@
         catch (error) { storageOK = false; }
     }
 
-    var spec, palette, canvas, context, vignette, stripe, picker, panel, toggle, status, fileStatus;
+    var spec, palette, canvas, context, atmosphere, vignette, stripe, picker, panel, toggle, status, fileStatus;
     var controls = {}, presetButtons = [], width = 0, height = 0, cells = [];
     var dx = radius * 1.5, dy = Math.sqrt(3) * radius, offset = 0;
-    var mouseX = -9999, mouseY = -9999, raf = null, lastTime = null, pulseTime = 0;
+    var mouseX = -9999, mouseY = -9999, raf = null, lastTime = null, pulseTime = 0, effectTime = 0;
+    var currentEffect = profile.effect;
     var started = false;
 
     function getSpec() {
@@ -117,12 +134,17 @@
         window.dispatchEvent(new CustomEvent('hexstudio:change', {detail: clone(profile)}));
     }
     function apply() {
+        var resizeGrid = radius !== profile.size;
+        if (resizeGrid) { radius = profile.size; dx = radius * 1.5; dy = Math.sqrt(3) * radius; offset = 0; }
+        if (currentEffect !== profile.effect) { currentEffect = profile.effect; effectTime = 0; offset = 0; }
         spec = getSpec();
         palette = [spec.colors[0], spec.colors[0], spec.colors[0], spec.colors[1], spec.colors[2]].map(rgb);
         root.classList.add('hs-hex');
         root.classList.toggle('hs-hex-dark', profile.mode === 'dark');
         root.classList.toggle('hs-hex-light', profile.mode === 'light');
         root.setAttribute('data-hex-theme', profile.theme);
+        root.setAttribute('data-hex-effect', profile.effect);
+        root.style.setProperty('--hexstudio-motion-speed', (8 / Math.max(profile.speed, 0.1)) + 's');
         var custom = profile.theme === 'custom';
         var background = custom
             ? 'radial-gradient(85% 75% at 50% 38%,' + spec.glow + ',transparent 80%),' + spec.background
@@ -158,7 +180,7 @@
         });
         root.classList.toggle('hs-hex-still', !moving());
         for (var i = 0; i < cells.length; i++) cells[i].color = palette[cells[i].colorIndex];
-        if (started) { draw(0); animate(); syncControls(); }
+        if (started) { if (resizeGrid) build(); else draw(0); animate(); syncControls(); }
     }
 
     function injectStyles() {
@@ -171,7 +193,7 @@ html.hs-hex body {background:transparent!important}
 .hs-hexbg,.hs-hexvig {position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
 html.hs-hex {background:var(--hexstudio-background) fixed}
 html.hs-hex .hs-hexvig {background:var(--hexstudio-vignette)}
-html.hs-hex .hs-hexstripe {position:fixed;left:0;right:0;top:0;height:3px;z-index:1030;background:var(--hexstudio-stripe);background-size:200% 100%;animation:hs-hex-slide 8s linear infinite}
+html.hs-hex .hs-hexstripe {position:fixed;left:0;right:0;top:0;height:3px;z-index:1030;background:var(--hexstudio-stripe);background-size:200% 100%;animation:hs-hex-slide var(--hexstudio-motion-speed,8s) linear infinite}
 @keyframes hs-hex-slide {to{background-position:200% 0}}
 html.hs-hex-still .hs-hexstripe {animation:none}
 html.hs-hex-light body.hs-body {color-scheme:light}
@@ -214,6 +236,14 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
 .hexstudio-color input {display:block;width:100%;height:34px;padding:2px;border:1px solid #465363;border-radius:8px;background:#172334;cursor:pointer}
 .hexstudio-motion {display:flex;align-items:center;gap:9px;margin:17px 0 0;font-size:12px;color:#d4dfec}
 .hexstudio-motion input {width:16px;height:16px;margin:0;accent-color:#8acfff}
+.hexstudio-settings {display:grid;gap:13px;margin:18px 0 0;padding:15px 0 0;border:0;border-top:1px solid #344255;min-width:0}
+.hexstudio-settings legend {padding-right:8px;color:#a6b5c8;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
+.hexstudio-setting {display:grid;gap:7px;color:#d4dfec;font-size:12px}
+.hexstudio-setting-head {display:flex;justify-content:space-between;gap:12px}
+.hexstudio-setting output {color:#a2dcff;font-variant-numeric:tabular-nums}
+.hexstudio-setting input[type="range"] {width:100%;margin:2px 0;accent-color:#8acfff;cursor:pointer}
+.hexstudio-setting select {width:100%;padding:8px;border:1px solid #465363;border-radius:8px;background:#172334;color:#e7eef7;font:inherit;min-height:40px}
+.hexstudio-setting-note {font-size:11px;line-height:1.5;color:#a6b5c8;margin:0}
 .hexstudio-status {margin:13px 0 0;font-size:11px;color:#a6b5c8;min-height:17px}
 .hexstudio-files {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .hexstudio-filebtn {min-height:40px;border:1px solid #465363;border-radius:10px;padding:8px;background:#1c2d40;color:#e7eef7;font-size:11px!important}
@@ -227,12 +257,125 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
 `;
         (document.head || root).appendChild(style);
     }
-    function moving() { return profile.motion !== 'still' && !(media && media.matches); }
+    function createAtmosphere(ctx) {
+        'use strict';
+        var kind = 'none', animate = false;
+        function rgb(hex) {
+            hex = String(hex || '#8ccfff').replace('#', '');
+            if (hex.length === 3) hex = hex.replace(/./g, function (c) { return c + c; });
+            return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+        }
+        function tint(color, dark, white) {
+            return color.map(function (c) { return Math.round(dark ? c + (255 - c) * white : c * 0.54); });
+        }
+        function ink(color, alpha) { return 'rgba(' + color.join(',') + ',' + alpha.toFixed(4) + ')'; }
+        function glow(x, y, radius, color, alpha, w, h) {
+            var gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+            gradient.addColorStop(0, ink(color, alpha));
+            gradient.addColorStop(0.42, ink(color, alpha * 0.58));
+            gradient.addColorStop(1, ink(color, 0));
+            ctx.fillStyle = gradient;
+            var left = Math.max(0, x - radius), top = Math.max(0, y - radius);
+            var right = Math.min(w, x + radius), bottom = Math.min(h, y + radius);
+            if (right > left && bottom > top) ctx.fillRect(left, top, right - left, bottom - top);
+        }
+        function clouds(time, w, h, colors, dark, strength) {
+            var locations = [[0.10, 0.19], [0.37, 0.44], [0.65, 0.20], [0.89, 0.56], [0.46, 0.86]];
+            var scale = Math.max(w, h), phase = time * 0.000035;
+            for (var i = 0; i < locations.length; i++) {
+                var x = w * (locations[i][0] + Math.sin(phase + i * 1.9) * 0.075);
+                var y = h * (locations[i][1] + Math.cos(phase * 0.71 + i * 1.3) * 0.065);
+                var color = tint(colors[i % colors.length], dark, 0.30);
+                var alpha = (dark ? 0.105 : 0.068) * strength;
+                glow(x, y, scale * (0.27 + (i % 3) * 0.035), color, alpha, w, h);
+                glow(x + scale * 0.085, y - scale * 0.018, scale * 0.19, color, alpha * 0.52, w, h);
+            }
+        }
+        function smoothPath(points) {
+            ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]);
+            for (var i = 1; i < points.length - 1; i++) {
+                ctx.quadraticCurveTo(points[i][0], points[i][1],
+                    (points[i][0] + points[i + 1][0]) / 2, (points[i][1] + points[i + 1][1]) / 2);
+            }
+            var last = points[points.length - 1]; ctx.lineTo(last[0], last[1]);
+        }
+        function lightning(time, w, h, colors, dark) {
+            clouds(time, w, h, colors, dark, 0.83);
+            var scale = Math.max(0.6, Math.min(w, h) / 750);
+            for (var bolt = 0; bolt < 2; bolt++) {
+                var seed = bolt * 3.7 + 0.6;
+                var pulse = 0.22 + 0.78 * Math.pow((1 + Math.sin(time * 0.00022 + seed)) / 2, 2);
+                var color = tint(colors[bolt % colors.length], dark, 0.64);
+                var points = [], origin = w * (bolt ? 0.76 : 0.23);
+                for (var i = 0; i < 9; i++) {
+                    points.push([origin + Math.sin(i * 2.23 + seed) * w * 0.037 + i * w * (bolt ? -0.006 : 0.005),
+                        h * (0.04 + i * 0.105)]);
+                }
+                var branch = [points[4], [points[4][0] + w * 0.065, points[4][1] + h * 0.035],
+                    [points[4][0] + w * 0.11, points[4][1] + h * 0.13], [points[4][0] + w * 0.16, points[4][1] + h * 0.19]];
+                ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                ctx.shadowColor = ink(color, 0.3 * pulse); ctx.shadowBlur = 28 * scale;
+                ctx.filter = 'blur(' + (10 * scale).toFixed(2) + 'px)';
+                ctx.lineWidth = 19 * scale; ctx.strokeStyle = ink(color, (dark ? 0.08 : 0.045) * pulse);
+                smoothPath(points); ctx.stroke(); smoothPath(branch); ctx.stroke();
+                ctx.filter = 'blur(' + (3.2 * scale).toFixed(2) + 'px)';
+                ctx.lineWidth = 4 * scale; ctx.strokeStyle = ink(color, (dark ? 0.22 : 0.12) * pulse);
+                smoothPath(points); ctx.stroke();
+                ctx.lineWidth = 2.5 * scale; smoothPath(branch); ctx.stroke();
+                ctx.filter = 'none'; ctx.shadowBlur = 0;
+                glow(points[3][0], points[3][1], Math.max(w, h) * 0.22, color, (dark ? 0.085 : 0.045) * pulse, w, h);
+            }
+        }
+        function water(time, w, h, colors, dark) {
+            var phase = time * 0.00030, color = tint(colors[0], dark, 0.40);
+            glow(w * 0.28, h * 0.32, Math.max(w, h) * 0.52, color, dark ? 0.10 : 0.055, w, h);
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            ctx.shadowColor = ink(color, dark ? 0.20 : 0.10); ctx.shadowBlur = 13;
+            ctx.filter = 'blur(1.4px)'; ctx.lineWidth = 1.5;
+            for (var band = -1; band < 8; band++) {
+                var line = [];
+                for (var step = 0; step <= 36; step++) {
+                    var x = w * step / 36;
+                    var y = h * (band + 0.5) / 7 + Math.sin(x * 0.008 + phase + band * 1.2) * 20
+                        + Math.sin(x * 0.018 - phase * 0.73 + band) * 7;
+                    line.push([x, y]);
+                }
+                ctx.strokeStyle = ink(tint(colors[(band + 9) % colors.length], dark, 0.45), dark ? 0.12 : 0.075);
+                smoothPath(line); ctx.stroke();
+            }
+        }
+        return {
+            draw: function (effect, time, w, h, palette, isDark, active) {
+                kind = effect; animate = !!active;
+                if (!ctx || !(w > 0 && h > 0) || ['clouds', 'cloud', 'lightning', 'water'].indexOf(kind) < 0) return;
+                var colors = (palette && palette.length ? palette : ['#8ccfff', '#ffffff', '#b8c7d6']).map(rgb);
+                var t = animate && isFinite(time) ? Math.max(0, time) : 0;
+                ctx.save();
+                if (kind === 'clouds' || kind === 'cloud') clouds(t, w, h, colors, isDark, 1);
+                if (kind === 'lightning') lightning(t, w, h, colors, isDark);
+                if (kind === 'water') water(t, w, h, colors, isDark);
+                ctx.restore();
+            },
+            point: function (x, y, time, w, h) {
+                if (kind !== 'water') return {x: x, y: y};
+                var t = animate && isFinite(time) ? Math.max(0, time) * 0.00055 : 0;
+                var px = x - w * 0.34, py = y - h * 0.42, distance = Math.sqrt(px * px + py * py) || 1;
+                var ripple = Math.sin(distance * 0.021 - t * 1.15) * 2.0;
+                return {x: x + Math.sin(x * 0.010 + y * 0.006 - t) * 2.7 + px / distance * ripple,
+                    y: y + Math.sin(x * 0.005 - y * 0.012 + t * 0.81) * 2.7 + py / distance * ripple};
+            }
+        };
+    }
+    function moving() { return profile.motion !== 'still' && profile.speed > 0 && !(media && media.matches); }
     function hexPath(x, y) {
         context.beginPath();
         for (var i = 0; i < 6; i++) {
             var angle = Math.PI / 3 * i;
             var px = x + (radius - 3) * Math.cos(angle), py = y + (radius - 3) * Math.sin(angle);
+            if (profile.effect === 'water' && atmosphere) {
+                var ripple = atmosphere.point(px, py, moving() ? effectTime : 0, width, height);
+                px = ripple.x; py = ripple.y;
+            }
             if (i) context.lineTo(px, py); else context.moveTo(px, py);
         }
         context.closePath();
@@ -258,6 +401,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         context.clearRect(0, 0, width, height);
         context.lineWidth = 1;
         var dark = profile.mode === 'dark', active = moving();
+        if (atmosphere) atmosphere.draw(profile.effect, effectTime, width, height, spec.colors, dark, active);
         for (var i = 0; i < cells.length; i++) {
             var cell = cells[i], y = cell.y - offset, x = cell.x;
             if (y < -dy || y > height + dy) continue;
@@ -279,8 +423,10 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         if (!moving() || document.hidden || !context) return;
         var elapsed = lastTime === null ? 0 : Math.min(time - lastTime, 50);
         lastTime = time;
-        offset = (offset + elapsed * 0.0084) % dy;
-        pulseTime += elapsed;
+        var scaledElapsed = elapsed * profile.speed;
+        effectTime += scaledElapsed;
+        offset = profile.effect === 'water' ? 0 : (offset + scaledElapsed * 0.0084) % dy;
+        pulseTime += scaledElapsed;
         if (pulseTime >= 280) {
             pulseTime %= 280;
             for (var i = 0; i < 4; i++) {
@@ -288,7 +434,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
                 if (cell && cell.lit <= 0) cell.lit = 1;
             }
         }
-        draw(elapsed);
+        draw(scaledElapsed);
         raf = window.requestAnimationFrame(tick);
     }
     function animate() {
@@ -353,6 +499,27 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
             wrapper.appendChild(input); colors.appendChild(wrapper); controls[index] = input;
         });
         custom.appendChild(colors); panel.appendChild(custom);
+        var settings = element('fieldset', 'hexstudio-settings'); settings.appendChild(element('legend', '', 'Movement & atmosphere'));
+        function rangeSetting(label, key, min, max, step, handler) {
+            var wrapper = element('label', 'hexstudio-setting');
+            var heading = element('span', 'hexstudio-setting-head'); heading.appendChild(element('span', '', label));
+            var value = element('output'); heading.appendChild(value); controls[key + 'Value'] = value;
+            var input = element('input'); input.type = 'range'; input.min = min; input.max = max; input.step = step;
+            input.setAttribute('aria-label', label); controls[key] = input;
+            input.addEventListener('input', function () { handler(Number(input.value)); });
+            wrapper.appendChild(heading); wrapper.appendChild(input); settings.appendChild(wrapper);
+        }
+        rangeSetting('Hex size', 'size', '12', '160', '1', function (value) { api.setSize(value); });
+        rangeSetting('Movement speed', 'speed', '0', '3', '0.1', function (value) { api.setSpeed(value); });
+        var effectLabel = element('label', 'hexstudio-setting', 'Background effect');
+        controls.effect = element('select'); controls.effect.setAttribute('aria-label', 'Background effect');
+        [['clouds','Cloud haze'],['lightning','Soft lightning'],['water','Water ripples'],['none','None']].forEach(function (entry) {
+            var option = element('option', '', entry[1]); option.value = entry[0]; controls.effect.appendChild(option);
+        });
+        controls.effect.addEventListener('change', function () { api.setEffect(controls.effect.value); });
+        effectLabel.appendChild(controls.effect); settings.appendChild(effectLabel);
+        controls.effectNote = element('p', 'hexstudio-setting-note'); settings.appendChild(controls.effectNote);
+        panel.appendChild(settings);
         var motionLabel = element('label', 'hexstudio-motion');
         controls.motion = element('input'); controls.motion.type = 'checkbox';
         controls.motion.addEventListener('change', function () { api.setMotion(controls.motion.checked ? 'drift' : 'still'); });
@@ -411,8 +578,12 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         presetButtons.forEach(function (preset) { preset.setAttribute('aria-pressed', String(profile.theme === preset.getAttribute('data-theme'))); });
         controls[0].value = spec.background;
         spec.colors.forEach(function (color, i) { controls[i + 1].value = color; });
-        controls.motion.checked = moving(); controls.motion.disabled = !!(media && media.matches);
-        controls.motionText.textContent = media && media.matches ? 'Motion paused by system settings' : 'Animate background';
+        controls.size.value = profile.size; controls.sizeValue.textContent = profile.size + ' px';
+        controls.speed.value = profile.speed; controls.speedValue.textContent = profile.speed.toFixed(1) + '×';
+        controls.effect.value = profile.effect;
+        controls.effectNote.textContent = profile.effect === 'water' ? 'Anchored hexes ripple with the water. No upward drift.' : profile.effect === 'lightning' ? 'Soft, diffuse lightning glows behind the grid.' : profile.effect === 'clouds' ? 'Slow cloud haze moves behind the hexes.' : 'Just the honeycomb grid and cursor glow.';
+        controls.motion.checked = profile.motion !== 'still' && !(media && media.matches); controls.motion.disabled = !!(media && media.matches);
+        controls.motionText.textContent = media && media.matches ? 'Motion paused by system settings' : profile.speed === 0 ? 'Animation enabled · speed is paused' : 'Animate background';
         status.textContent = !remember ? 'Applies to this page only.' : storageOK ? 'Saved automatically in this browser.' : 'Storage unavailable. Applies to this page only.';
     }
     function wrapContent(body) {
@@ -434,6 +605,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         vignette = element('div', 'hs-hexvig'); vignette.setAttribute('aria-hidden', 'true'); document.body.appendChild(vignette);
         canvas = element('canvas', 'hs-hexbg'); canvas.setAttribute('aria-hidden', 'true'); document.body.appendChild(canvas);
         try { context = canvas.getContext && canvas.getContext('2d'); } catch (error) { context = null; }
+        if (context) atmosphere = createAtmosphere(context);
         started = true;
         build(); animate();
         window.addEventListener('resize', build);
@@ -463,15 +635,27 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         },
         downloadBackground: function () { download(api.backgroundScript(), 'text/javascript', 'hex-background.js'); },
         getThemes: function () { return Object.keys(themes).map(function (id) { return {id: id, label: themes[id].label}; }); },
+        setSize: function (value) {
+            if (!inRange(value, 12, 160)) throw new TypeError('Hex size must be a number from 12 to 160 pixels.');
+            profile.size = value; changed();
+        },
+        setSpeed: function (value) {
+            if (!inRange(value, 0, 3)) throw new TypeError('Movement speed must be a number from 0 to 3.');
+            profile.speed = value; changed();
+        },
+        setEffect: function (value) {
+            if (effects.indexOf(value) < 0) throw new TypeError('Choose clouds, lightning, water, or none.');
+            profile.effect = value; changed();
+        },
         setTheme: function (id, options) {
             if (!Object.prototype.hasOwnProperty.call(themes, id)) throw new TypeError('Unknown HexStudio theme: ' + id);
             options = options || {};
             if (options.mode && ['dark','light'].indexOf(options.mode) < 0) throw new TypeError('Mode must be dark or light.');
-            profile = {version: 1, theme: id, mode: options.mode || themes[id].mode, motion: profile.motion}; changed();
+            profile = {version: 1, theme: id, mode: options.mode || themes[id].mode, motion: profile.motion, size: profile.size, speed: profile.speed, effect: profile.effect}; changed();
         },
         setColors: function (options) {
             if (!options || !hex(options.background) || !Array.isArray(options.colors) || options.colors.length !== 3 || !options.colors.every(hex)) throw new TypeError('Provide a background and three hex colors.');
-            profile = {version: 1, theme: 'custom', mode: luminance(hex(options.background)) > 0.179 ? 'light' : 'dark', motion: profile.motion, background: hex(options.background), colors: options.colors.map(hex)}; changed();
+            profile = {version: 1, theme: 'custom', mode: luminance(hex(options.background)) > 0.179 ? 'light' : 'dark', motion: profile.motion, background: hex(options.background), colors: options.colors.map(hex), size: profile.size, speed: profile.speed, effect: profile.effect}; changed();
         },
         setMotion: function (motion) {
             if (motion !== 'still' && motion !== 'drift') throw new TypeError('Motion must be drift or still.');
