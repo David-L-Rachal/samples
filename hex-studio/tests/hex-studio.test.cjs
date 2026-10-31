@@ -7,22 +7,33 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'hex-studio.js'), 'utf
 function setup(options = {}) {
   const rafs = new Map(), listeners = {}, mediaListeners = {}, store = new Map(), blobs = new Map(), downloads = [], cleanups = [];
   const canvasStats = {frames: 0, fills: 0, gradients: 0, effectPaints: 0};
-  let id = 0, strokes = 0, active, currentPath = [], framePaths = [];
+  let id = 0, strokes = 0, active, currentPath = [], currentCommands = [], pathClosed = false, framePaths = [], frameStrokes = [];
+  const canvasStateStack = [];
+  const canvasStateKeys = ['strokeStyle','fillStyle','lineWidth','globalAlpha','shadowColor','shadowBlur','filter','lineCap','lineJoin'];
   const canvasContext = {
-    beginPath(){currentPath=[]},
-    moveTo(x,y){currentPath.push({x,y,method:'moveTo'})},
-    lineTo(x,y){currentPath.push({x,y,method:'lineTo'})},
-    quadraticCurveTo(){},
-    bezierCurveTo(){},
-    arc(){},
-    ellipse(){},
-    closePath(){},
-    stroke(){strokes++;framePaths.push(currentPath.map(point=>({...point})))},
+    strokeStyle:'#000000',fillStyle:'#000000',lineWidth:1,globalAlpha:1,shadowColor:'rgba(0,0,0,0)',shadowBlur:0,filter:'none',lineCap:'butt',lineJoin:'miter',
+    beginPath(){currentPath=[];currentCommands=[];pathClosed=false},
+    moveTo(x,y){currentPath.push({x,y,method:'moveTo'});currentCommands.push({method:'moveTo',args:[x,y]})},
+    lineTo(x,y){currentPath.push({x,y,method:'lineTo'});currentCommands.push({method:'lineTo',args:[x,y]})},
+    quadraticCurveTo(...args){currentCommands.push({method:'quadraticCurveTo',args})},
+    bezierCurveTo(...args){currentCommands.push({method:'bezierCurveTo',args})},
+    arc(...args){currentCommands.push({method:'arc',args})},
+    ellipse(...args){currentCommands.push({method:'ellipse',args})},
+    closePath(){pathClosed=true;currentCommands.push({method:'closePath',args:[]})},
+    stroke(){
+      strokes++;
+      const points=currentPath.map(point=>({...point}));
+      framePaths.push({points,closed:pathClosed});
+      frameStrokes.push({points,closed:pathClosed,commands:currentCommands.map(command=>({method:command.method,args:command.args.slice()})),
+        ...Object.fromEntries(canvasStateKeys.map(key=>[key,this[key]]))});
+    },
     fill(){canvasStats.fills++},
     fillRect(){canvasStats.effectPaints++},
-    clearRect(){canvasStats.frames++;framePaths=[]},
+    clearRect(){canvasStats.frames++;framePaths=[];frameStrokes=[]},
     setTransform(){},
-    save(){},restore(){},translate(){},rotate(){},scale(){},
+    save(){canvasStateStack.push(Object.fromEntries(canvasStateKeys.map(key=>[key,this[key]])))},
+    restore(){const state=canvasStateStack.pop();if(state)Object.assign(this,state)},
+    translate(){},rotate(){},scale(){},
     createRadialGradient(){canvasStats.gradients++;return {addColorStop(){}}},
     createLinearGradient(){canvasStats.gradients++;return {addColorStop(){}}}
   };
@@ -72,7 +83,7 @@ function setup(options = {}) {
   const context=vm.createContext({window,document,location:{search:options.search||''},URLSearchParams,Blob:class {constructor(parts,options){this.content=parts.join('');this.type=options.type}},CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail}}});
   const run=()=>vm.runInContext(options.source||source,context);
   run();
-  return {window,document,root,body,head,rafs,store,media,mediaListeners,run,downloads,blobs,cleanups,canvasStats,get active(){return active},get strokes(){return strokes},get gridPaths(){return framePaths.filter(points=>points.length===6)},
+  return {window,document,root,body,head,rafs,store,media,mediaListeners,run,downloads,blobs,cleanups,canvasStats,get active(){return active},get strokes(){return strokes},get gridPaths(){return framePaths.filter(path=>path.closed&&path.points.length===6).map(path=>path.points)},get frameStrokes(){return frameStrokes},
     event(k,e={}){(listeners[k]||[]).forEach(fn=>fn(e))},step(time){const pending=[...rafs.values()];rafs.clear();pending.forEach(fn=>fn(time))}};
 }
 let checks=0;
@@ -87,6 +98,31 @@ function inputValue(element,value,event='input') {
  element.value=String(value);
  assert.ok(element.handlers[event]&&element.handlers[event].length,'the control must handle '+event);
  element.handlers[event].forEach(fn=>fn({target:element}));
+}
+function openStrokePaths(environment) {
+ const paths=[];
+ for(const stroke of environment.frameStrokes) {
+  if(stroke.closed)continue;
+  let points=[];
+  function finish(){if(points.length>1)paths.push({...stroke,points});points=[]}
+  for(const command of stroke.commands) {
+   if(command.method==='moveTo'){finish();points.push({x:command.args[0],y:command.args[1]})}
+   else if(command.method==='lineTo')points.push({x:command.args[0],y:command.args[1]});
+  }
+  finish();
+ }
+ return paths;
+}
+function pathSignature(points) {return points.map(point=>point.x.toFixed(3)+','+point.y.toFixed(3)).join(';')}
+function uniqueOpenPaths(environment) {
+ const unique=new Map();
+ for(const path of openStrokePaths(environment))unique.set(pathSignature(path.points),path);
+ return [...unique.values()];
+}
+function strokeColor(stroke) {
+ const match=/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(stroke.strokeStyle);
+ assert.ok(match,'the rendered stroke must have a numeric RGB color');
+ return {rgb:match.slice(1,4).map(Number),opacity:Number(match[4]===undefined?1:match[4])*(stroke.globalAlpha===undefined?1:stroke.globalAlpha)};
 }
 test('original defaults, canvas, and singleton animation',()=>{
  const e=setup();assert.equal(e.window.HexStudio.getProfile().theme,'original');assert.equal(e.rafs.size,1);
@@ -293,6 +329,60 @@ test('water ripples deform hex vertices while cells stay anchored',()=>{
  }
  assert.ok(shapeChanged,'water must change vertex-relative geometry rather than translate the entire grid');
  assert.ok(maxCenterTravel<20,'water cells should remain anchored instead of drifting through a full row');
+});
+test('lightning has jagged connected forks instead of smooth decorative curves',()=>{
+ const e=setup(),api=e.window.HexStudio;api.setEffect('lightning');
+ const paths=uniqueOpenPaths(e).sort((a,b)=>b.points.length-a.points.length);
+ assert.ok(paths.length>=4,'a strike must include several distinct open bolt paths');
+ const main=paths[0].points;
+ assert.ok(main.length>=20,'the main bolt needs enough straight segments to form a jagged strike');
+ let lastTurn=0,alternatingTurns=0;
+ for(let i=2;i<main.length;i++) {
+  const ax=main[i-1].x-main[i-2].x,ay=main[i-1].y-main[i-2].y;
+  const bx=main[i].x-main[i-1].x,by=main[i].y-main[i-1].y;
+  const cross=ax*by-ay*bx;
+  if(Math.abs(cross)<0.001)continue;
+  const turn=Math.sign(cross);if(lastTurn&&turn!==lastTurn)alternatingTurns++;lastTurn=turn;
+ }
+ assert.ok(alternatingTurns>=5,'the bolt must zigzag through sharp changes of direction');
+ const forks=paths.slice(1).filter(branch=>paths.some(parent=>parent!==branch&&parent.points.length>branch.points.length&&parent.points.some(point=>Math.hypot(point.x-branch.points[0].x,point.y-branch.points[0].y)<0.01)));
+ assert.ok(forks.length>=2,'at least two smaller branches must connect to a parent bolt');
+ assert.ok(e.gridPaths.length>0,'the closed honeycomb grid remains visible behind the open bolts');
+});
+test('lightning keeps a strike stable then generates new geometry on a later cycle',()=>{
+ const e=setup(),api=e.window.HexStudio;api.setSize(64);api.setSpeed(1);api.setEffect('lightning');api.setTheme('carbon');
+ const before=api.exportProfile();
+ function mainSignature(){const paths=uniqueOpenPaths(e).sort((a,b)=>b.points.length-a.points.length);assert.ok(paths.length);return pathSignature(paths[0].points)}
+ const first=mainSignature();e.step(0);e.step(50);
+ assert.equal(mainSignature(),first,'a single strike must not jitter into a new random shape on every frame');
+ for(let time=100;time<=2400;time+=50){e.step(time);assert.equal(e.rafs.size,1,'lightning must use the existing single animation loop')}
+ assert.notEqual(mainSignature(),first,'a later strike cycle must change the bolt geometry');
+ assert.equal(api.exportProfile(),before,'rendering strike cycles must not alter the chosen profile or settings');
+});
+test('lightning uses a bright thin core with a broader blue bloom',()=>{
+ const e=setup();e.window.HexStudio.setEffect('lightning');
+ const paths=openStrokePaths(e),main=paths.reduce((best,path)=>!best||path.points.length>best.points.length?path:best,null);
+ assert.ok(main);
+ const layers=paths.filter(path=>pathSignature(path.points)===pathSignature(main.points)).sort((a,b)=>a.lineWidth-b.lineWidth);
+ assert.ok(layers.length>=2,'the same bolt must be rendered as a sharp core and a larger glow');
+ const core=layers[0],bloom=layers[layers.length-1],color=strokeColor(core);
+ assert.ok(color.rgb.every(channel=>channel>=230),'the peak core should appear near white');
+ assert.ok(color.opacity>=0.75,'the peak core should be clearly visible rather than faint decoration');
+ assert.ok(bloom.lineWidth>core.lineWidth*3,'bloom must surround the thin core');
+ assert.ok(bloom.shadowBlur>core.shadowBlur,'the surrounding bloom should diffuse farther than the core');
+});
+test('lightning flashes fade into a quiet gap before the next cycle',()=>{
+ const e=setup();e.window.HexStudio.setEffect('lightning');
+ function opacity(){return openStrokePaths(e).reduce((peak,stroke)=>Math.max(peak,strokeColor(stroke).opacity),0)}
+ const samples=[opacity()];e.step(0);
+ for(let time=50;time<=2400;time+=50){e.step(time);samples.push(opacity())}
+ const peak=Math.max(...samples);
+ assert.ok(peak>=0.75,'a cycle must include a bright strike');
+ assert.ok(samples.some(value=>value>0&&value<peak*0.3),'the strike should fade through lower brightness levels');
+ let quietRun=0,longestQuietRun=0;
+ for(const value of samples){quietRun=value===0?quietRun+1:0;longestQuietRun=Math.max(longestQuietRun,quietRun)}
+ assert.ok(longestQuietRun>=5,'separate strikes need a sustained gap rather than an always-on curve');
+ assert.ok(samples[samples.length-1]>peak*0.7,'a later cycle must produce a fresh bright strike after the gap');
 });
 console.log(`${checks} behavioral checks passed`);
 module.exports = {setup};

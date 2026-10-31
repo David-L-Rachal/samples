@@ -300,30 +300,90 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
             var last = points[points.length - 1]; ctx.lineTo(last[0], last[1]);
         }
         function lightning(time, w, h, colors, dark) {
-            clouds(time, w, h, colors, dark, 0.83);
-            var scale = Math.max(0.6, Math.min(w, h) / 750);
-            for (var bolt = 0; bolt < 2; bolt++) {
-                var seed = bolt * 3.7 + 0.6;
-                var pulse = 0.22 + 0.78 * Math.pow((1 + Math.sin(time * 0.00022 + seed)) / 2, 2);
-                var color = tint(colors[bolt % colors.length], dark, 0.64);
-                var points = [], origin = w * (bolt ? 0.76 : 0.23);
-                for (var i = 0; i < 9; i++) {
-                    points.push([origin + Math.sin(i * 2.23 + seed) * w * 0.037 + i * w * (bolt ? -0.006 : 0.005),
-                        h * (0.04 + i * 0.105)]);
+            var base = colors[0] || [120, 190, 255];
+            var blue = [Math.round(91 * 0.82 + base[0] * 0.18), Math.round(111 * 0.82 + base[1] * 0.18), Math.round(245 * 0.9 + base[2] * 0.1)];
+            var haze = [blue, [137, 148, 218], [103, 113, 184]];
+            clouds(time, w, h, haze, dark, 0.5);
+            var cycle = Math.floor(time / 2400), phase = time - cycle * 2400;
+            var burst = phase < 330 ? 0 : phase >= 390 && phase < 640 ? 1 : phase >= 730 && phase < 880 && cycle % 3 === 0 ? 2 : -1;
+            if (burst < 0) return;
+            var age = burst === 0 ? phase / 330 : burst === 1 ? (phase - 390) / 250 : (phase - 730) / 150;
+            var energy = Math.pow(Math.max(0, 1 - age), 1.35) * (burst === 0 ? 1 : burst === 1 ? 0.76 : 0.43);
+            if (energy < 0.008) return;
+            var key = cycle + ':' + burst + ':' + w + ':' + h;
+            var cache = lightning.cache;
+            if (!cache || cache.key !== key) {
+                var seed = ((cycle * 4099 + burst * 131 + 19763) >>> 0) || 1;
+                function random() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+                function jagged(start, end, levels, roughness) {
+                    var points = [start, end], amount = roughness;
+                    for (var level = 0; level < levels; level++) {
+                        var next = [points[0]];
+                        for (var p = 1; p < points.length; p++) {
+                            var a = points[p - 1], b = points[p], dx = b[0] - a[0], dy = b[1] - a[1];
+                            var length = Math.sqrt(dx * dx + dy * dy) || 1, displacement = (random() - 0.5) * amount;
+                            var along = 0.35 + random() * 0.30;
+                            next.push([a[0] + dx * along - dy / length * displacement, a[1] + dy * along + dx / length * displacement]);
+                            next.push(b);
+                        }
+                        points = next; amount *= 0.53;
+                    }
+                    return points;
                 }
-                var branch = [points[4], [points[4][0] + w * 0.065, points[4][1] + h * 0.035],
-                    [points[4][0] + w * 0.11, points[4][1] + h * 0.13], [points[4][0] + w * 0.16, points[4][1] + h * 0.19]];
-                ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-                ctx.shadowColor = ink(color, 0.3 * pulse); ctx.shadowBlur = 28 * scale;
-                ctx.filter = 'blur(' + (10 * scale).toFixed(2) + 'px)';
-                ctx.lineWidth = 19 * scale; ctx.strokeStyle = ink(color, (dark ? 0.08 : 0.045) * pulse);
-                smoothPath(points); ctx.stroke(); smoothPath(branch); ctx.stroke();
-                ctx.filter = 'blur(' + (3.2 * scale).toFixed(2) + 'px)';
-                ctx.lineWidth = 4 * scale; ctx.strokeStyle = ink(color, (dark ? 0.22 : 0.12) * pulse);
-                smoothPath(points); ctx.stroke();
-                ctx.lineWidth = 2.5 * scale; smoothPath(branch); ctx.stroke();
-                ctx.filter = 'none'; ctx.shadowBlur = 0;
-                glow(points[3][0], points[3][1], Math.max(w, h) * 0.22, color, (dark ? 0.085 : 0.045) * pulse, w, h);
+                var direction = cycle % 4, start, end;
+                if (direction === 0) { start = [w * (0.03 + random() * 0.15), -h * 0.04]; end = [w * (0.65 + random() * 0.27), h * 1.06]; }
+                if (direction === 1) { start = [w * (0.80 + random() * 0.18), -h * 0.04]; end = [w * (0.06 + random() * 0.30), h * 1.06]; }
+                if (direction === 2) { start = [-w * 0.04, h * (0.02 + random() * 0.18)]; end = [w * 1.04, h * (0.67 + random() * 0.26)]; }
+                if (direction === 3) { start = [w * 1.04, h * (0.04 + random() * 0.18)]; end = [w * (0.12 + random() * 0.34), h * 1.06]; }
+                var main = jagged(start, end, 7, Math.min(w, h) * 0.22), paths = [{points: main, level: 0}];
+                function fork(origin, angle, length, depth) {
+                    var target = [origin[0] + Math.cos(angle) * length, origin[1] + Math.sin(angle) * length];
+                    var points = jagged(origin, target, depth === 1 ? 5 : depth === 2 ? 4 : 3, length * 0.30);
+                    paths.push({points: points, level: depth});
+                    if (depth >= 3) return;
+                    var count = depth === 1 ? 2 : random() > 0.58 ? 1 : 0;
+                    for (var n = 0; n < count; n++) {
+                        var index = Math.floor(points.length * (0.27 + random() * 0.40));
+                        fork(points[index], angle + (random() > 0.5 ? 1 : -1) * (0.45 + random() * 0.70), length * (0.37 + random() * 0.23), depth + 1);
+                    }
+                }
+                var mainAngle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+                for (var branch = 0; branch < 8; branch++) {
+                    var index = Math.floor(main.length * (0.10 + branch * 0.09 + random() * 0.035));
+                    fork(main[index], mainAngle + (branch % 2 ? 1 : -1) * (0.46 + random() * 0.91), Math.min(w, h) * (0.15 + random() * 0.28), 1);
+                }
+                cache = {key: key, paths: paths, glow: [main[38], main[83]]};
+                lightning.cache = cache;
+            }
+            var scale = Math.max(0.7, Math.min(1.35, Math.sqrt(w * h) / 900));
+            var intensity = energy * (dark ? 1 : 0.46);
+            var medium = dark ? [166, 187, 255] : [90, 111, 182];
+            var core = dark ? [250, 252, 255] : [64, 87, 145];
+            var widths = [1.7, 0.80, 0.43, 0.25], opacities = [1, 0.69, 0.40, 0.23];
+            ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            for (var pass = 0; pass < 3; pass++) {
+                var color = pass === 0 ? blue : pass === 1 ? medium : core;
+                ctx.filter = pass === 0 ? 'blur(' + (12 * scale).toFixed(2) + 'px)' : pass === 1 ? 'blur(' + (1.8 * scale).toFixed(2) + 'px)' : 'blur(0.22px)';
+                ctx.shadowColor = ink(blue, intensity * (pass === 0 ? 0.30 : 0.18));
+                ctx.shadowBlur = pass === 0 ? 28 * scale : pass === 1 ? 9 * scale : 1.5;
+                for (var group = 0; group < 4; group++) {
+                    var width = widths[group];
+                    ctx.lineWidth = (pass === 0 ? width * 10 + 6 : pass === 1 ? width * 2.9 + 0.7 : width) * scale;
+                    ctx.strokeStyle = ink(color, intensity * opacities[group] * (pass === 0 ? 0.17 : pass === 1 ? 0.52 : 0.96));
+                    ctx.beginPath();
+                    for (var pathIndex = 0; pathIndex < cache.paths.length; pathIndex++) {
+                        var path = cache.paths[pathIndex], points = path.points;
+                        if (path.level !== group) continue;
+                        ctx.moveTo(points[0][0], points[0][1]);
+                        for (var p = 1; p < points.length; p++) ctx.lineTo(points[p][0], points[p][1]);
+                    }
+                    ctx.stroke();
+                }
+            }
+            ctx.restore();
+            for (var light = 0; light < cache.glow.length; light++) {
+                var at = cache.glow[light];
+                glow(at[0], at[1], Math.min(w, h) * 0.21, blue, intensity * 0.14, w, h);
             }
         }
         function water(time, w, h, colors, dark) {
@@ -513,7 +573,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         rangeSetting('Movement speed', 'speed', '0', '3', '0.1', function (value) { api.setSpeed(value); });
         var effectLabel = element('label', 'hexstudio-setting', 'Background effect');
         controls.effect = element('select'); controls.effect.setAttribute('aria-label', 'Background effect');
-        [['clouds','Cloud haze'],['lightning','Soft lightning'],['water','Water ripples'],['none','None']].forEach(function (entry) {
+        [['clouds','Cloud haze'],['lightning','Lightning bolts'],['water','Water ripples'],['none','None']].forEach(function (entry) {
             var option = element('option', '', entry[1]); option.value = entry[0]; controls.effect.appendChild(option);
         });
         controls.effect.addEventListener('change', function () { api.setEffect(controls.effect.value); });
@@ -581,7 +641,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         controls.size.value = profile.size; controls.sizeValue.textContent = profile.size + ' px';
         controls.speed.value = profile.speed; controls.speedValue.textContent = profile.speed.toFixed(1) + '×';
         controls.effect.value = profile.effect;
-        controls.effectNote.textContent = profile.effect === 'water' ? 'Anchored hexes ripple with the water. No upward drift.' : profile.effect === 'lightning' ? 'Soft, diffuse lightning glows behind the grid.' : profile.effect === 'clouds' ? 'Slow cloud haze moves behind the hexes.' : 'Just the honeycomb grid and cursor glow.';
+        controls.effectNote.textContent = profile.effect === 'water' ? 'Anchored hexes ripple with the water. No upward drift.' : profile.effect === 'lightning' ? 'Branching lightning bolts strike and fade with a soft blue-white glow.' : profile.effect === 'clouds' ? 'Slow cloud haze moves behind the hexes.' : 'Just the honeycomb grid and cursor glow.';
         controls.motion.checked = profile.motion !== 'still' && !(media && media.matches); controls.motion.disabled = !!(media && media.matches);
         controls.motionText.textContent = media && media.matches ? 'Motion paused by system settings' : profile.speed === 0 ? 'Animation enabled · speed is paused' : 'Animate background';
         status.textContent = !remember ? 'Applies to this page only.' : storageOK ? 'Saved automatically in this browser.' : 'Storage unavailable. Applies to this page only.';
