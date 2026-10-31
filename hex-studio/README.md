@@ -35,8 +35,8 @@ main page:
 - **Hex size** sets the cell radius from 12 to 160 pixels.
 - **Movement speed** ranges from 0× to 3×; 0× pauses animation.
 - **Cloud haze** moves softly behind the honeycomb.
-- **Lightning bolts** creates jagged white-blue strikes, fine forks, and a soft
-  surrounding glow behind the hexagons.
+- **Lightning pulse** softly blooms and fades through a branching blue-white
+  glow. Its slow, smooth pulse has no sharp flashes or re-strikes.
 - **Water ripples** keeps the grid anchored and ripples its contours.
 - **None** leaves the honeycomb's ambient pulses and cursor glow.
 

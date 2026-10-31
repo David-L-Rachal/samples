@@ -122,11 +122,11 @@ h1 {font-size:clamp(38px,5vw,64px);line-height:1.07;letter-spacing:-.055em;margi
     <div class="motion-label"><label for="background-effect">Background effect</label></div>
     <select id="background-effect" class="hs-select" aria-describedby="effect-help">
      <option value="clouds" selected>Cloud haze</option>
-     <option value="lightning">Lightning bolts</option>
+     <option value="lightning">Lightning pulse</option>
      <option value="water">Water ripples</option>
      <option value="none">None</option>
     </select>
-    <p id="effect-help">Water keeps the grid anchored. Lightning branches and glows behind it.</p>
+    <p id="effect-help">Water keeps the grid anchored. Lightning pulses softly behind it.</p>
    </div>
   </div>
   <p class="motion-preference" id="motion-preference">Animation follows your system’s reduced-motion preference and pauses in hidden tabs.</p>
@@ -153,7 +153,7 @@ __BACKGROUND_SCRIPT__
  var colors = {original:['#6ec4ff','#3ddc84','#ff5a60'],carbon:['#c9c9c9','#ff4545','#f5f5f5'],nimbus:['#78cafa','#f8fcff','#aebecd']};
  var effectDescriptions = {
   clouds: 'Slow cloud haze drifts softly behind the honeycomb.',
-  lightning: 'Branching lightning bolts strike and fade with a soft blue-white glow.',
+  lightning: 'Fuzzy blue-white lightning slowly brightens and fades in gentle pulses.',
   water: 'The honeycomb stays anchored while its contours ripple like water.',
   none: 'Ambient pulses and cursor glow highlight the honeycomb.'
  };

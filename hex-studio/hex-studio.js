@@ -304,16 +304,16 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
             var blue = [Math.round(91 * 0.82 + base[0] * 0.18), Math.round(111 * 0.82 + base[1] * 0.18), Math.round(245 * 0.9 + base[2] * 0.1)];
             var haze = [blue, [137, 148, 218], [103, 113, 184]];
             clouds(time, w, h, haze, dark, 0.5);
-            var cycle = Math.floor(time / 2400), phase = time - cycle * 2400;
-            var burst = phase < 330 ? 0 : phase >= 390 && phase < 640 ? 1 : phase >= 730 && phase < 880 && cycle % 3 === 0 ? 2 : -1;
-            if (burst < 0) return;
-            var age = burst === 0 ? phase / 330 : burst === 1 ? (phase - 390) / 250 : (phase - 730) / 150;
-            var energy = Math.pow(Math.max(0, 1 - age), 1.35) * (burst === 0 ? 1 : burst === 1 ? 0.76 : 0.43);
+            // One slow breath of light. Change the branching pattern only at
+            // the dim minimum, so a new shape never snaps into a bright frame.
+            var period = 8000, clock = time + period / 2;
+            var cycle = Math.floor(clock / period), phase = (clock - cycle * period) / period;
+            var energy = Math.pow(Math.sin(Math.PI * phase), 2);
             if (energy < 0.008) return;
-            var key = cycle + ':' + burst + ':' + w + ':' + h;
+            var key = cycle + ':' + w + ':' + h;
             var cache = lightning.cache;
             if (!cache || cache.key !== key) {
-                var seed = ((cycle * 4099 + burst * 131 + 19763) >>> 0) || 1;
+                var seed = ((cycle * 4099 + 19763) >>> 0) || 1;
                 function random() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
                 function jagged(start, end, levels, roughness) {
                     var points = [start, end], amount = roughness;
@@ -363,13 +363,13 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
             ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
             for (var pass = 0; pass < 3; pass++) {
                 var color = pass === 0 ? blue : pass === 1 ? medium : core;
-                ctx.filter = pass === 0 ? 'blur(' + (12 * scale).toFixed(2) + 'px)' : pass === 1 ? 'blur(' + (1.8 * scale).toFixed(2) + 'px)' : 'blur(0.22px)';
+                ctx.filter = pass === 0 ? 'blur(' + (24 * scale).toFixed(2) + 'px)' : pass === 1 ? 'blur(' + (8 * scale).toFixed(2) + 'px)' : 'blur(' + (4 * scale).toFixed(2) + 'px)';
                 ctx.shadowColor = ink(blue, intensity * (pass === 0 ? 0.30 : 0.18));
-                ctx.shadowBlur = pass === 0 ? 28 * scale : pass === 1 ? 9 * scale : 1.5;
+                ctx.shadowBlur = pass === 0 ? 48 * scale : pass === 1 ? 24 * scale : 10 * scale;
                 for (var group = 0; group < 4; group++) {
                     var width = widths[group];
-                    ctx.lineWidth = (pass === 0 ? width * 10 + 6 : pass === 1 ? width * 2.9 + 0.7 : width) * scale;
-                    ctx.strokeStyle = ink(color, intensity * opacities[group] * (pass === 0 ? 0.17 : pass === 1 ? 0.52 : 0.96));
+                    ctx.lineWidth = (pass === 0 ? width * 13 + 8 : pass === 1 ? width * 3.8 + 2 : width * 2.4 + 1) * scale;
+                    ctx.strokeStyle = ink(color, intensity * opacities[group] * (pass === 0 ? 0.14 : pass === 1 ? 0.30 : 0.56));
                     ctx.beginPath();
                     for (var pathIndex = 0; pathIndex < cache.paths.length; pathIndex++) {
                         var path = cache.paths[pathIndex], points = path.points;
@@ -573,7 +573,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         rangeSetting('Movement speed', 'speed', '0', '3', '0.1', function (value) { api.setSpeed(value); });
         var effectLabel = element('label', 'hexstudio-setting', 'Background effect');
         controls.effect = element('select'); controls.effect.setAttribute('aria-label', 'Background effect');
-        [['clouds','Cloud haze'],['lightning','Lightning bolts'],['water','Water ripples'],['none','None']].forEach(function (entry) {
+        [['clouds','Cloud haze'],['lightning','Lightning pulse'],['water','Water ripples'],['none','None']].forEach(function (entry) {
             var option = element('option', '', entry[1]); option.value = entry[0]; controls.effect.appendChild(option);
         });
         controls.effect.addEventListener('change', function () { api.setEffect(controls.effect.value); });
@@ -641,7 +641,7 @@ html.hs-hex:not([data-hex-theme="original"]) .hs-btn-primary,html.hs-hex-light .
         controls.size.value = profile.size; controls.sizeValue.textContent = profile.size + ' px';
         controls.speed.value = profile.speed; controls.speedValue.textContent = profile.speed.toFixed(1) + '×';
         controls.effect.value = profile.effect;
-        controls.effectNote.textContent = profile.effect === 'water' ? 'Anchored hexes ripple with the water. No upward drift.' : profile.effect === 'lightning' ? 'Branching lightning bolts strike and fade with a soft blue-white glow.' : profile.effect === 'clouds' ? 'Slow cloud haze moves behind the hexes.' : 'Just the honeycomb grid and cursor glow.';
+        controls.effectNote.textContent = profile.effect === 'water' ? 'Anchored hexes ripple with the water. No upward drift.' : profile.effect === 'lightning' ? 'A fuzzy branching glow slowly brightens and fades in gentle pulses.' : profile.effect === 'clouds' ? 'Slow cloud haze moves behind the hexes.' : 'Just the honeycomb grid and cursor glow.';
         controls.motion.checked = profile.motion !== 'still' && !(media && media.matches); controls.motion.disabled = !!(media && media.matches);
         controls.motionText.textContent = media && media.matches ? 'Motion paused by system settings' : profile.speed === 0 ? 'Animation enabled · speed is paused' : 'Animate background';
         status.textContent = !remember ? 'Applies to this page only.' : storageOK ? 'Saved automatically in this browser.' : 'Storage unavailable. Applies to this page only.';

@@ -349,40 +349,49 @@ test('lightning has jagged connected forks instead of smooth decorative curves',
  assert.ok(forks.length>=2,'at least two smaller branches must connect to a parent bolt');
  assert.ok(e.gridPaths.length>0,'the closed honeycomb grid remains visible behind the open bolts');
 });
-test('lightning keeps a strike stable then generates new geometry on a later cycle',()=>{
+test('lightning holds its shape through a pulse and changes geometry while dim',()=>{
  const e=setup(),api=e.window.HexStudio;api.setSize(64);api.setSpeed(1);api.setEffect('lightning');api.setTheme('carbon');
  const before=api.exportProfile();
  function mainSignature(){const paths=uniqueOpenPaths(e).sort((a,b)=>b.points.length-a.points.length);assert.ok(paths.length);return pathSignature(paths[0].points)}
- const first=mainSignature();e.step(0);e.step(50);
- assert.equal(mainSignature(),first,'a single strike must not jitter into a new random shape on every frame');
- for(let time=100;time<=2400;time+=50){e.step(time);assert.equal(e.rafs.size,1,'lightning must use the existing single animation loop')}
- assert.notEqual(mainSignature(),first,'a later strike cycle must change the bolt geometry');
- assert.equal(api.exportProfile(),before,'rendering strike cycles must not alter the chosen profile or settings');
+ const first=mainSignature(),openingBrightness=Math.max(...openStrokePaths(e).map(stroke=>strokeColor(stroke).opacity));e.step(0);
+ for(let time=50;time<=500;time+=50){e.step(time);assert.equal(mainSignature(),first,'the initial shape must remain stable as its brightness pulses')}
+ let changedBrightness;
+ for(let time=550;time<=8000;time+=50){
+  e.step(time);assert.equal(e.rafs.size,1,'lightning must use the existing single animation loop');
+  if(changedBrightness===undefined&&uniqueOpenPaths(e).length&&mainSignature()!==first)changedBrightness=Math.max(...openStrokePaths(e).map(stroke=>strokeColor(stroke).opacity));
+ }
+ assert.notEqual(mainSignature(),first,'a later pulse cycle must reveal a new bolt shape');
+ assert.ok(changedBrightness!==undefined&&changedBrightness<openingBrightness*0.15,'new geometry should appear near the dim phase rather than cut sharply at full brightness');
+ assert.equal(api.exportProfile(),before,'rendering pulses must not alter the chosen profile or settings');
 });
-test('lightning uses a bright thin core with a broader blue bloom',()=>{
+test('lightning uses a readable fuzzy core with a broader blue bloom',()=>{
  const e=setup();e.window.HexStudio.setEffect('lightning');
  const paths=openStrokePaths(e),main=paths.reduce((best,path)=>!best||path.points.length>best.points.length?path:best,null);
  assert.ok(main);
  const layers=paths.filter(path=>pathSignature(path.points)===pathSignature(main.points)).sort((a,b)=>a.lineWidth-b.lineWidth);
- assert.ok(layers.length>=2,'the same bolt must be rendered as a sharp core and a larger glow');
+ assert.ok(layers.length>=2,'the same bolt must be rendered as a soft core and a larger glow');
  const core=layers[0],bloom=layers[layers.length-1],color=strokeColor(core);
  assert.ok(color.rgb.every(channel=>channel>=230),'the peak core should appear near white');
- assert.ok(color.opacity>=0.75,'the peak core should be clearly visible rather than faint decoration');
+ assert.ok(color.opacity>=0.35&&color.opacity<=0.65,'the core should remain readable at a restrained pulse brightness');
+ const coreBlur=/blur\(([\d.]+)px\)/.exec(core.filter);
+ assert.ok(coreBlur&&Number(coreBlur[1])>2.5,'the visible core should be diffuse rather than appear razor sharp');
  assert.ok(bloom.lineWidth>core.lineWidth*3,'bloom must surround the thin core');
  assert.ok(bloom.shadowBlur>core.shadowBlur,'the surrounding bloom should diffuse farther than the core');
 });
-test('lightning flashes fade into a quiet gap before the next cycle',()=>{
+test('lightning breathes smoothly through a dim minimum and returns without flashes',()=>{
  const e=setup();e.window.HexStudio.setEffect('lightning');
  function opacity(){return openStrokePaths(e).reduce((peak,stroke)=>Math.max(peak,strokeColor(stroke).opacity),0)}
- const samples=[opacity()];e.step(0);
- for(let time=50;time<=2400;time+=50){e.step(time);samples.push(opacity())}
- const peak=Math.max(...samples);
- assert.ok(peak>=0.75,'a cycle must include a bright strike');
- assert.ok(samples.some(value=>value>0&&value<peak*0.3),'the strike should fade through lower brightness levels');
- let quietRun=0,longestQuietRun=0;
- for(const value of samples){quietRun=value===0?quietRun+1:0;longestQuietRun=Math.max(longestQuietRun,quietRun)}
- assert.ok(longestQuietRun>=5,'separate strikes need a sustained gap rather than an always-on curve');
- assert.ok(samples[samples.length-1]>peak*0.7,'a later cycle must produce a fresh bright strike after the gap');
+ const samples=[{time:0,value:opacity()}];e.step(0);
+ for(let time=50;time<=8000;time+=50){e.step(time);samples.push({time,value:opacity()})}
+ const peak=Math.max(...samples.map(sample=>sample.value));
+ assert.ok(peak>=0.35&&peak<=0.65,'a pulse should peak at a restrained, readable brightness');
+ assert.ok(samples.some(sample=>sample.value>0&&sample.value<peak*0.3),'the pulse should pass gradually through lower brightness levels');
+ assert.ok(samples.find(sample=>sample.time===500).value>peak*0.8,'the glow should remain continuous instead of quickly striking and fading');
+ assert.ok(samples.find(sample=>sample.time===4000).value<peak*0.1,'the pulse should reach a dim midpoint');
+ const fade=samples.find(sample=>sample.time===2000).value,rise=samples.find(sample=>sample.time===6000).value;
+ assert.ok(fade>peak*0.25&&fade<peak*0.75&&rise>peak*0.25&&rise<peak*0.75,'both sides of the breath should have a gradual mid-brightness phase');
+ for(let i=1;i<samples.length;i++)assert.ok(Math.abs(samples[i].value-samples[i-1].value)<0.08,'adjacent animation frames must not jump like a hard flash or restrike');
+ assert.ok(samples[samples.length-1].value>peak*0.9,'the next smooth pulse should return to full glow');
 });
 console.log(`${checks} behavioral checks passed`);
 module.exports = {setup};
